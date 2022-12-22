@@ -14,7 +14,7 @@ public class GitRepositoryImpl implements GitRepository {
 	private HashMap<Path, CommitFile> commitFiles;
 	private HashMap<String, Branch> branches;
 	private String head; // name of current branch or commit
-	private String ignoreExpressions = "";
+	private String ignoreExpressions = "(\\" + GIT_FILE + ")";
 
 	private static final long serialVersionUID = 1L;
 	public static final String COMMIT_PERFORMED = "Commit performed ";
@@ -30,6 +30,7 @@ public class GitRepositoryImpl implements GitRepository {
 	public static final String NO_HEAD = " No head yet";
 	public static final String BRANCH_NAME = " branch ";
 	public static final String COMMIT_NAME = " commit ";
+	public static final String WRONG_EXPRESSION = " Wrong regex";
 
 	private GitRepositoryImpl(Path git) {
 		this.gitPath = git.toString();
@@ -84,8 +85,8 @@ public class GitRepositoryImpl implements GitRepository {
 		res.commitName = getCommitName();
 		res.commitMessage = message;
 		res.prev = prev;
-		commits.put(res.commitName, res);
 		res.commitFiles = getCommitContent(res.commitName);
+		commits.put(res.commitName, res);
 		return res;
 	}
 
@@ -105,6 +106,7 @@ public class GitRepositoryImpl implements GitRepository {
 		}
 		List<String> content = getFileContent(fs.path);
 		CommitFile res = new CommitFile(fs.path, timeModified, content, commitName);
+		//Assumption neither rename nor delete
 		commitFiles.put(fs.path, res);
 		return res;
 	}
@@ -120,7 +122,8 @@ public class GitRepositoryImpl implements GitRepository {
 	private String getCommitName() {
 		String res = "";
 		do {
-			res = Integer.toString(ThreadLocalRandom.current().nextInt(0x1000000, 0xfffffff), 16);
+			res = Integer.toString(ThreadLocalRandom.current()
+					.nextInt(0x1000000, 0xfffffff), 16);
 		} while (commits.containsKey(res));
 		return res;
 	}
@@ -133,7 +136,7 @@ public class GitRepositoryImpl implements GitRepository {
 
 	private void createInternalBranch(String branchName, Commit commit) {
 		if (branches.containsKey(branchName)) {
-			throw new IllegalArgumentException(String.format("Branch %s already exists", branchName));
+			throw new IllegalStateException(String.format("Branch %s already exists", branchName));
 		}
 		Branch branch = new Branch();
 		branch.branchName = branchName;
@@ -147,7 +150,9 @@ public class GitRepositoryImpl implements GitRepository {
 	public List<FileState> info() {
 		Path directoryPath = Path.of(".");
 		try {
-			return Files.list(directoryPath).map(p -> p.normalize()).filter(p -> !ignoreFilter(p)).map(p -> {
+			return Files.list(directoryPath).map(p -> p.normalize())
+					.filter(p -> !ignoreFilter(p))
+					.map(p -> {
 				try {
 					return new FileState(p, getStatus(p));
 				} catch (IOException e) {
@@ -162,18 +167,20 @@ public class GitRepositoryImpl implements GitRepository {
 
 	private boolean ignoreFilter(Path p) {
 		// Assumption no nested directories
-		return p.toString().matches(ignoreExpressions) || !Files.isRegularFile(p);
+		return !Files.isRegularFile(p)||p.toString().matches(ignoreExpressions)  ;
 	}
 
 	private Status getStatus(Path p) throws IOException {
 		CommitFile commitFile = commitFiles.get(p);
 
-		return commitFile == null ? Status.UNTRACKED : getStatusFromCommitFile(commitFile, p);
+		return commitFile == null ? Status.UNTRACKED :
+			getStatusFromCommitFile(commitFile, p);
 	}
 
 	private Status getStatusFromCommitFile(CommitFile commitFile, Path p) throws IOException {
 
-		return Files.getLastModifiedTime(p).toInstant().compareTo(commitFile.modificationTime) > 0 ? Status.MODIFIED
+		return Files.getLastModifiedTime(p).toInstant()
+				.compareTo(commitFile.modificationTime) > 0 ? Status.MODIFIED
 				: Status.COMMITTED;
 	}
 
@@ -228,7 +235,7 @@ public class GitRepositoryImpl implements GitRepository {
 	public String deleteBranch(String branchName) {
 		String res = BRANCH_NO_EXISTS;
 		if (branches.containsKey(branchName)) {
-			if (head.equals(res)) {
+			if (head.equals(branchName)) {
 				res = ACTIVE_BRANCH;
 			} else if (branches.size() == 1) {
 				res = ONE_BRANCH;
@@ -262,7 +269,13 @@ public class GitRepositoryImpl implements GitRepository {
 	@Override
 	public List<String> branches() {
 		
-		return branches.values().stream().map(b -> b.branchName).toList();
+		return branches.values().stream().map(b -> {
+			String res = b.branchName;
+			if(head.equals(res)) {
+				res += "*";
+			}
+			return res;
+		}).toList();
 	}
 
 	@Override
@@ -304,8 +317,19 @@ public class GitRepositoryImpl implements GitRepository {
 
 	@Override
 	public String addIgnoredFileNameExp(String regex) {
+		checkRegex(regex);
+		
 		ignoreExpressions += String.format("|(%s)", regex);
 		return String.format("Regex for files ignored is %s", ignoreExpressions);
+	}
+
+	private void checkRegex(String regex) {
+		try {
+			"test".matches(regex);
+		} catch (Exception e) {
+			throw new IllegalArgumentException(regex + WRONG_EXPRESSION);
+		}
+		
 	}
 
 }
