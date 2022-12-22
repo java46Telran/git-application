@@ -7,4 +7,9 @@ public String commitMessage;
 public String toString() {
 	return String.format("%s: %s", commitName, commitMessage);
 }
+public CommitMessage(String commitName, String commitMessage) {
+	super();
+	this.commitName = commitName;
+	this.commitMessage = commitMessage;
+}
 }
