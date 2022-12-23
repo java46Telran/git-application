@@ -16,22 +16,20 @@ import org.junit.jupiter.api.TestMethodOrder;
 import telran.git.service.*;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class GitRepositoryTest {
-private static final String WORKING_TREE = "working-tree";
 GitRepository gitRepository;
+static final String FILE1 = "file1.txt";
+static final String FILE2 = "file2.txt";
+static final String FILE3 = "file2.txt";
 	@BeforeAll
 	static void setUpBeforeClass() throws Exception {
-		Path workingDirectory = Path.of(".");
+		Files.deleteIfExists(Path.of(GitRepository.GIT_FILE));
+		Files.deleteIfExists(Path.of(FILE1));
+		Files.deleteIfExists(Path.of(FILE2));
+		Files.deleteIfExists(Path.of(FILE3));
 		
 		
-		Files.list(workingDirectory).filter(Files::isRegularFile)
-		.forEach(t -> {
-			try {
-				Files.delete(t);
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-		});
+		
+		
 	}
 
 	@Test
