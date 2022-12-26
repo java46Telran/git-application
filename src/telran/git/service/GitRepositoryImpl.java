@@ -11,7 +11,7 @@ import telran.git.model.*;
 public class GitRepositoryImpl implements GitRepository {
 	private String gitPath;
 	private HashMap<String, Commit> commits;
-	private HashMap<Path, CommitFile> commitFiles;
+	private HashMap<String, CommitFile> commitFiles;
 	private HashMap<String, Branch> branches;
 	private String head; // name of current branch or commit
 	private String ignoreExpressions = "(\\" + GIT_FILE + ")";
@@ -107,7 +107,7 @@ public class GitRepositoryImpl implements GitRepository {
 		List<String> content = getFileContent(fs.path);
 		CommitFile res = new CommitFile(fs.path, timeModified, content, commitName);
 		//Assumption neither rename nor delete
-		commitFiles.put(fs.path, res);
+		commitFiles.put(fs.path.toString(), res);
 		return res;
 	}
 
@@ -171,7 +171,7 @@ public class GitRepositoryImpl implements GitRepository {
 	}
 
 	private Status getStatus(Path p) throws IOException {
-		CommitFile commitFile = commitFiles.get(p);
+		CommitFile commitFile = commitFiles.get(p.toString());
 
 		return commitFile == null ? Status.UNTRACKED :
 			getStatusFromCommitFile(commitFile, p);
