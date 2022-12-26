@@ -1,9 +1,11 @@
 package telran.git.service;
 
 import java.nio.file.*;
+import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 import java.io.*;
 
 import telran.git.model.*;
@@ -14,7 +16,7 @@ public class GitRepositoryImpl implements GitRepository {
 	private HashMap<String, CommitFile> commitFiles;
 	private HashMap<String, Branch> branches;
 	private String head; // name of current branch or commit
-	private String ignoreExpressions = "(\\" + GIT_FILE + ")";
+	private String ignoreExpressions = "(\\..*)";
 
 	private static final long serialVersionUID = 1L;
 	public static final String COMMIT_PERFORMED = "Commit performed ";
@@ -31,7 +33,11 @@ public class GitRepositoryImpl implements GitRepository {
 	public static final String BRANCH_NAME = " branch ";
 	public static final String COMMIT_NAME = " commit ";
 	public static final String WRONG_EXPRESSION = " Wrong regex";
-
+	public static final String SWITCHED = "Switched to";
+	public static final String WRONG_COMMIT_NAME = "no commit with the name ";
+	public static final String SAME_AS_CURRENT = "The same commit as the current one";
+	public static final String DIRECTORY_NO_COMMITTED = "Run commit before switching";
+	private Instant lastCommitTimestamp;
 	private GitRepositoryImpl(Path git) {
 		this.gitPath = git.toString();
 		commits = new HashMap<>();
@@ -85,8 +91,10 @@ public class GitRepositoryImpl implements GitRepository {
 		res.commitName = getCommitName();
 		res.commitMessage = message;
 		res.prev = prev;
+		res.timestamp = Instant.now();
 		res.commitFiles = getCommitContent(res.commitName);
 		commits.put(res.commitName, res);
+		lastCommitTimestamp = res.timestamp;
 		return res;
 	}
 
@@ -105,8 +113,8 @@ public class GitRepositoryImpl implements GitRepository {
 			throw new RuntimeException(e.toString());
 		}
 		List<String> content = getFileContent(fs.path);
-		CommitFile res = new CommitFile(fs.path, timeModified, content, commitName);
-		//Assumption neither rename nor delete
+		CommitFile res = new CommitFile(fs.path.toString(), timeModified, content, commitName);
+		// Assumption neither rename nor delete
 		commitFiles.put(fs.path.toString(), res);
 		return res;
 	}
@@ -122,8 +130,7 @@ public class GitRepositoryImpl implements GitRepository {
 	private String getCommitName() {
 		String res = "";
 		do {
-			res = Integer.toString(ThreadLocalRandom.current()
-					.nextInt(0x1000000, 0xfffffff), 16);
+			res = Integer.toString(ThreadLocalRandom.current().nextInt(0x1000000, 0xfffffff), 16);
 		} while (commits.containsKey(res));
 		return res;
 	}
@@ -150,9 +157,7 @@ public class GitRepositoryImpl implements GitRepository {
 	public List<FileState> info() {
 		Path directoryPath = Path.of(".");
 		try {
-			return Files.list(directoryPath).map(p -> p.normalize())
-					.filter(p -> !ignoreFilter(p))
-					.map(p -> {
+			return Files.list(directoryPath).map(p -> p.normalize()).filter(p -> !ignoreFilter(p)).map(p -> {
 				try {
 					return new FileState(p, getStatus(p));
 				} catch (IOException e) {
@@ -167,20 +172,17 @@ public class GitRepositoryImpl implements GitRepository {
 
 	private boolean ignoreFilter(Path p) {
 		// Assumption no nested directories
-		return !Files.isRegularFile(p)||p.toString().matches(ignoreExpressions)  ;
+		return !Files.isRegularFile(p) || p.toString().matches(ignoreExpressions);
 	}
 
 	private Status getStatus(Path p) throws IOException {
 		CommitFile commitFile = commitFiles.get(p.toString());
 
-		return commitFile == null ? Status.UNTRACKED :
-			getStatusFromCommitFile(commitFile, p);
+		return commitFile == null ? Status.UNTRACKED : getStatusFromCommitFile(commitFile, p);
 	}
 
 	private Status getStatusFromCommitFile(CommitFile commitFile, Path p) throws IOException {
-
-		return Files.getLastModifiedTime(p).toInstant()
-				.compareTo(commitFile.modificationTime) > 0 ? Status.MODIFIED
+		return Files.getLastModifiedTime(p).toInstant().compareTo(lastCommitTimestamp) > 0 ? Status.MODIFIED
 				: Status.COMMITTED;
 	}
 
@@ -257,7 +259,7 @@ public class GitRepositoryImpl implements GitRepository {
 			if (commit == null) {
 				throw new IllegalStateException("no commit with name " + commitName);
 			}
-			while(commit != null) {
+			while (commit != null) {
 				res.add(new CommitMessage(commit.commitName, commit.commitMessage));
 				commit = commit.prev;
 			}
@@ -268,10 +270,10 @@ public class GitRepositoryImpl implements GitRepository {
 
 	@Override
 	public List<String> branches() {
-		
+
 		return branches.values().stream().map(b -> {
 			String res = b.branchName;
-			if(head.equals(res)) {
+			if (head.equals(res)) {
 				res += "*";
 			}
 			return res;
@@ -281,16 +283,89 @@ public class GitRepositoryImpl implements GitRepository {
 	@Override
 	public List<Path> commitContent(String commitName) {
 		Commit commit = commits.get(commitName);
-		if(commit == null) {
+		if (commit == null) {
 			throw new IllegalArgumentException(commitName + " doesn't exist");
 		}
-		return commit.commitFiles.stream().map(cf -> cf.path).toList();
+		return commit.commitFiles.stream().map(cf -> Path.of(cf.path)).toList();
 	}
 
 	@Override
 	public String switchTo(String name) {
-		//Not implemented
-		return null;
+		List<FileState> fileStates = info();
+		String res = SWITCHED + name;
+		Commit commitTo = commitSwitched(name);
+		Commit commitHead = getCommit();
+		if (commitTo != null) {
+			if (head.equals(name) || commitTo.commitName.equals(commitHead.commitName)) {
+				res = name + SAME_AS_CURRENT;
+			} else if (fileStates.stream().anyMatch(fs -> fs.status != Status.COMMITTED)) {
+				res = DIRECTORY_NO_COMMITTED;
+			} else {
+				info().stream().forEach(fs -> {
+					try {
+						Files.delete(fs.path);
+					} catch (IOException e) {
+						throw new IllegalStateException("error in deleting files " + e.getMessage());
+					}
+				});
+				switchProcess(commitHead, commitTo);
+				head = name;
+				lastCommitTimestamp = Instant.now();
+			}
+			
+		}
+
+		return res;
+	}
+
+	
+	
+
+	
+
+	private void writeFile(CommitFile cf) {
+		try (PrintWriter writer = new PrintWriter(cf.path)) {
+			cf.content.stream().forEach(writer::println);
+			Files.setLastModifiedTime(Path.of(cf.path), FileTime.from(cf.modificationTime));
+		} catch (Exception e) {
+			throw new IllegalStateException(e.toString());
+		}
+
+	}
+
+	
+
+	private void switchProcess(Commit commitHead, Commit commitTo) {
+		//With assumption files are not removed from working directory
+		Set<String> restoredFiles = new HashSet<>();
+		try {
+			while(commitTo != null && !commitTo.commitName.equals(commitHead.commitName) ) {
+				commitTo.commitFiles.stream().forEach(cf -> {
+					if(!restoredFiles.contains(cf.path)) {
+						writeFile(cf);
+						restoredFiles.add(cf.path);
+					}
+				});
+				commitTo = commitTo.prev;
+			}
+		} catch (Exception e) {
+			throw new IllegalStateException("error in switchForward functionality ");
+		}
+
+	}
+
+	private Commit commitSwitched(String name) {
+		Commit res = null;
+		String commitName = name;
+		Branch branch = branches.get(name);
+		if (branch != null) {
+			commitName = branch.commitName;
+		}
+		res = commits.get(commitName);
+		if (res == null) {
+			throw new IllegalArgumentException(WRONG_COMMIT_NAME + commitName);
+		}
+		return res;
 	}
 
 	@Override
@@ -307,18 +382,17 @@ public class GitRepositoryImpl implements GitRepository {
 	public void save() {
 		try (ObjectOutputStream output = new ObjectOutputStream(Files.newOutputStream(Path.of(gitPath)))) {
 			output.writeObject(this);
-			
+
 		} catch (Exception e) {
 			throw new RuntimeException(e.getMessage());
 		}
-		
 
 	}
 
 	@Override
 	public String addIgnoredFileNameExp(String regex) {
 		checkRegex(regex);
-		
+
 		ignoreExpressions += String.format("|(%s)", regex);
 		return String.format("Regex for files ignored is %s", ignoreExpressions);
 	}
@@ -329,7 +403,7 @@ public class GitRepositoryImpl implements GitRepository {
 		} catch (Exception e) {
 			throw new IllegalArgumentException(regex + WRONG_EXPRESSION);
 		}
-		
+
 	}
 
 }
