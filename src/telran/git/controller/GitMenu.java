@@ -29,7 +29,7 @@ static void commitMethod(InputOutput io) {
 	io.writeLine(gitRepository.commit(commitMessage));
 }
 static void addRegexMethod(InputOutput io) {
-	String commitMessage = io.readPredicate("Enter regular expression", "Wrong regular expression",
+	String regex = io.readPredicate("Enter regular expression", "Wrong regular expression",
 			e -> {
 				boolean res = true;
 				try {
@@ -39,7 +39,7 @@ static void addRegexMethod(InputOutput io) {
 				}
 				return res;
 			});
-	io.writeLine(gitRepository.commit(commitMessage));
+	io.writeLine(gitRepository.addIgnoredFileNameExp(regex));
 }
 static void commitContentMethod(InputOutput io) {
 	String commitName = io.readString("Enter commit name");

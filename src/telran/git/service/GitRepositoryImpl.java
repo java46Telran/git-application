@@ -33,10 +33,11 @@ public class GitRepositoryImpl implements GitRepository {
 	public static final String BRANCH_NAME = " branch ";
 	public static final String COMMIT_NAME = " commit ";
 	public static final String WRONG_EXPRESSION = " Wrong regex";
-	public static final String SWITCHED = "Switched to";
+	public static final String SWITCHED = "Switched to ";
 	public static final String WRONG_COMMIT_NAME = "no commit with the name ";
 	public static final String SAME_AS_CURRENT = "The same commit as the current one";
 	public static final String DIRECTORY_NO_COMMITTED = "Run commit before switching";
+	private static final String NOTHING_COMMIT = "nothing to commit";
 	private Instant lastCommitTimestamp;
 	private GitRepositoryImpl(Path git) {
 		this.gitPath = git.toString();
@@ -68,6 +69,10 @@ public class GitRepositoryImpl implements GitRepository {
 
 	@Override
 	public String commit(String commitMessage) {
+		List<FileState> states = info();
+		if(states.isEmpty() || states.stream().allMatch(fs -> fs.status == Status.COMMITTED)) {
+			return NOTHING_COMMIT;
+		}
 		return head == null ? commitHeadNull(commitMessage) : commitHeadNoNull(commitMessage);
 	}
 
@@ -157,7 +162,8 @@ public class GitRepositoryImpl implements GitRepository {
 	public List<FileState> info() {
 		Path directoryPath = Path.of(".");
 		try {
-			return Files.list(directoryPath).map(p -> p.normalize()).filter(p -> !ignoreFilter(p)).map(p -> {
+			return Files.list(directoryPath).map(p -> p.normalize())
+					.filter(p -> !ignoreFilter(p)).map(p -> {
 				try {
 					return new FileState(p, getStatus(p));
 				} catch (IOException e) {
@@ -178,7 +184,8 @@ public class GitRepositoryImpl implements GitRepository {
 	private Status getStatus(Path p) throws IOException {
 		CommitFile commitFile = commitFiles.get(p.toString());
 
-		return commitFile == null ? Status.UNTRACKED : getStatusFromCommitFile(commitFile, p);
+		return commitFile == null ? Status.UNTRACKED :
+			getStatusFromCommitFile(commitFile, p);
 	}
 
 	private Status getStatusFromCommitFile(CommitFile commitFile, Path p) throws IOException {
@@ -223,7 +230,7 @@ public class GitRepositoryImpl implements GitRepository {
 				branches.remove(branchName);
 				branches.put(newName, branch);
 				if (head.equals(branchName)) {
-					head = branchName;
+					head = newName;
 				}
 				res = BRANCH_RENAMED;
 			}
@@ -308,7 +315,7 @@ public class GitRepositoryImpl implements GitRepository {
 						throw new IllegalStateException("error in deleting files " + e.getMessage());
 					}
 				});
-				switchProcess(commitHead, commitTo);
+				switchProcess(commitTo);
 				head = name;
 				lastCommitTimestamp = Instant.now();
 			}
@@ -326,7 +333,6 @@ public class GitRepositoryImpl implements GitRepository {
 	private void writeFile(CommitFile cf) {
 		try (PrintWriter writer = new PrintWriter(cf.path)) {
 			cf.content.stream().forEach(writer::println);
-			Files.setLastModifiedTime(Path.of(cf.path), FileTime.from(cf.modificationTime));
 		} catch (Exception e) {
 			throw new IllegalStateException(e.toString());
 		}
@@ -335,11 +341,11 @@ public class GitRepositoryImpl implements GitRepository {
 
 	
 
-	private void switchProcess(Commit commitHead, Commit commitTo) {
+	private void switchProcess(Commit commitTo) {
 		//With assumption files are not removed from working directory
 		Set<String> restoredFiles = new HashSet<>();
 		try {
-			while(commitTo != null && !commitTo.commitName.equals(commitHead.commitName) ) {
+			while(commitTo != null ) {
 				commitTo.commitFiles.stream().forEach(cf -> {
 					if(!restoredFiles.contains(cf.path)) {
 						writeFile(cf);
